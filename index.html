@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FactorialSurvey (R package) – Tanaka Laboratory</title>
+  <meta name="description" content="FactorialSurvey: An R package for designing and analysing factorial survey experiments (FSE), including beta regression workflows and WTP estimation.">
+  <style>
+    body{font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", "Yu Gothic", "Meiryo", sans-serif; line-height:1.7; margin:0; color:#111;}
+    header, nav, main, footer{max-width: 880px; margin: 0 auto; padding: 0 16px;}
+    header{padding-top:24px; padding-bottom:8px;}
+    .brand{font-size: 1.3rem; font-weight:700; margin:0;}
+    nav{display:flex; flex-wrap:wrap; gap: 12px; padding: 8px 16px 16px 16px; border-bottom:1px solid #eee;}
+    nav a{color:#0366d6; text-decoration:none}
+    nav a:hover{text-decoration:underline}
+    h2{margin-top:2rem; border-bottom:1px solid #eee; padding-bottom:.25rem}
+    pre{background:#fafafa; border:1px solid #eee; padding:12px; border-radius:8px; overflow:auto; max-height:400px;}
+    code{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
+    footer{margin-top: 3rem; padding-top: 1rem; padding-bottom:2rem; border-top:1px solid #eee; font-size:.95rem}
+    .cols{display:grid; grid-template-columns: 1fr; gap: 16px;}
+    @media (min-width: 900px){ .cols{ grid-template-columns: 2fr 1fr; } }
+    .box{background:#fafafa; border:1px solid #eee; padding:12px; border-radius:8px}
+    ul{padding-left:1.25rem}
+    .muted{color:#666}
+  </style>
+</head>
+<body>
+  <header>
+    <p class="brand">FactorialSurvey (R package)</p>
+  </header>
+  <nav>
+    <a href="index.html">日本語 (Home)</a>
+    <a href="en.html">English Top</a>
+    <a href="pub.html">研究業績</a>
+    <a href="fse.html">要因サーベイ実験</a>
+    <a href="https://tanakalab.gitbook.io/factorialsurvey/" target="_blank" rel="noopener">Docs (GitBook)</a>
+    <a href="https://github.com/tanakak/FactorialSurvey" target="_blank" rel="noopener">GitHub</a>
+  </nav>
+  <main>
+    <section>
+      <h2>Overview</h2>
+      <p><strong>FactorialSurvey</strong> is an R toolkit for <em>factorial survey experiments (FSE)</em>—a vignette‑based approach to measure preferences and intentions.
+         The package supports a practical workflow from <strong>D‑efficient design</strong> through <strong>estimation</strong> to <strong>WTP analysis</strong>.</p>
+      <ul>
+        <li><strong>Design:</strong> Create efficient, balanced experimental designs (<code>fs_defficient()</code>).</li>
+        <li><strong>Estimation (0–10 scales):</strong> Beta regression with optional Smithson–Verkuilen transformation (<code>fs_betareg()</code>, <code>transform=TRUE</code>).</li>
+        <li><strong>Post‑estimation:</strong> Report AIC, BIC, LL(0), pseudo‑R², % correct prediction (<code>fs_post_estimate()</code>).</li>
+        <li><strong>WTP:</strong> Marginal and expected willingness‑to‑pay (<code>fs_mwtp()</code>, <code>fs_ewtp()</code>).</li>
+      </ul>
+      <p class="muted">The Quick start below is a single copy‑paste script. It loads data from GitHub and runs the full workflow.</p>
+    </section>
+
+    <div class="cols">
+      <section>
+        <h2>Installation</h2>
+<pre><code># from GitHub (development)
+# install.packages("remotes")
+remotes::install_github("tanakak/FactorialSurvey")</code></pre>
+
+        <h2>Quick start (copy‑paste and run)</h2>
+<pre><code>#################################################################
+# 0. Preparation: Load Packages
+#################################################################
+
+# Install required packages (only for the first time)
+# 'devtools' is necessary to install packages from GitHub.
+# This step will be skipped if it's already installed.
+if (!requireNamespace("devtools", quietly = TRUE)) {
+  install.packages("devtools")
+}
+
+# Force install the latest version of the FactorialSurvey package from GitHub.
+# "force = TRUE" ensures that it overwrites any existing version.
+# "upgrade = 'never'" prevents the upgrading of other packages.
+devtools::install_github("tanakak/FactorialSurvey",
+                         force = TRUE,
+                         upgrade = "never",
+                         dependencies = TRUE)
+
+# Load the FactorialSurvey package.
+# This makes functions like fs_betareg available for use.
+library(FactorialSurvey)
+
+
+# Load other necessary packages.
+# These are the "tools" required for the data analysis.
+library(dplyr)      # For efficient data manipulation and processing.
+library(tidyr)      # For tidying data, especially for converting between "wide" and "long" formats.
+library(betareg)    # For running beta regression models.
+library(margins)    # For calculating marginal effects.
+
+
+
+#################################################################
+# 1. Data Loading and Preprocessing
+#################################################################
+
+
+# --- Load the Data from GitHub ---
+# Use the read.csv() function to load the CSV files directly from the GitHub repository URL.
+bento_url <- "https://raw.githubusercontent.com/tanakak/fs/main/bento.csv"
+data <- read.csv(bento_url)
+
+
+# --- Create Respondent IDs ---
+# Add an 'id' column to uniquely identify each row (each respondent).
+data$id <- 1:nrow(data)
+
+
+# --- Reorder Columns ---
+# Move the 'id' column to the first position.
+data <- data %>% select(id, everything())
+
+
+# --- Inspect the Data ---
+str(data)
+summary(data)
+
+
+
+#################################################################
+# 2. Data Reshaping (from Wide to Long)
+#################################################################
+
+# --- Reshape the Data ---
+# Convert the data from "wide" format to "long" format.
+data_long <- data %>%
+  pivot_longer(
+    # Specify the columns to be reshaped (all columns starting with "fs_q")
+    cols = starts_with("fs_q"),
+    
+    # The name of the new column that will store the original column names
+    names_to = "id_fse",
+    
+    # The name of the new column that will store the original values
+    values_to = "rating"
+  ) %>%
+  mutate(
+    # Remove the "fs_q" prefix from the "id_fse" column and convert it to a number
+    id_fse = as.integer(gsub("fs_q", "", id_fse))
+  ) %>%
+  # Sort the data by respondent id and vignette id
+  arrange(id, id_fse)
+
+
+# --- Check the Reshaped Data ---
+head(data_long)
+
+
+
+#################################################################
+# 3. Merging with Vignette Information
+#################################################################
+# --- Vignette Data Description ---
+# The 'data_fse' object contains the experimental design of the survey.
+# Each row defines one unique vignette (a hypothetical scenario).
+# The columns are:
+#   - id_fse: A unique identifier for each vignette, used to match ratings to scenarios.
+#   - x1 to x4: These represent the different attributes (factors) of the bento box.
+#       - x1: Main dish type (e.g., chicken, tofu)
+#       - x2: Presence of a side dish
+#       - x3: Presence of nutritional information
+#       - x4: Price
+
+# --- Load FSE Vignette Data from GitHub ---
+vignette_url <- "https://raw.githubusercontent.com/tanakak/fs/main/vignette.csv"
+data_fse <- read.csv(vignette_url)
+
+
+# --- Merge the Datasets ---
+# Join 'data_long' and 'data_fse' using "id_fse" as the key.
+data_merged <- data_long %>%
+  left_join(data_fse, by = "id_fse")
+
+
+# --- Check the Merged Data ---
+str(data_merged)
+head(data_merged)
+
+
+
+#################################################################
+# 4. Factorial Survey Experiment (FSE) Analysis
+#################################################################
+
+
+# --- Create Variables for Analysis ---
+# Rename the vignette factors (x1, x2, etc.) to more intuitive names
+# and convert them into dummy variables for the analysis.
+data_merged <- data_merged %>%
+  mutate(
+    price        = x4,
+    main.chicken = ifelse(x1 == 1, 1, 0),
+    main.tofu    = ifelse(x1 == 2, 1, 0),
+    side         = ifelse(x2 == 1, 1, 0),
+    info         = ifelse(x3 == 1, 1, 0)
+  )
+
+# --- Check Descriptive Statistics ---
+summary(data_merged %>% select(rating, price, main.chicken, main.tofu, side, info))
+
+
+# --- Estimate the Model ---
+# Use the fs_betareg() function to estimate a beta regression model.
+# This function automates model estimation, calculation of marginal effects,
+# and printing the results based on the provided formula and data.
+
+result <- fs_betareg(
+  # Specify the model formula: explain 'rating' with price, main.chicken, etc.
+  formula = rating ~ price + main.chicken + main.tofu + side + info,
+  
+  # Specify the data frame to be used for the analysis
+  data = data_merged,
+  
+  # Automatically transform the response variable 'rating' to the (0, 1) interval
+  # required for beta regression.
+  transform = TRUE
+)
+
+
+#################################################################
+# 5. Marginal Effects (Original 0-1 Scale vs. Rescaled 0-10 Scale)
+#################################################################
+
+# When `verbose=TRUE` (the default), the fs_betareg() function prints both
+# the (0-1) scale and (0-10) scale marginal effects to the console during execution.
+
+# Additionally, the returned `result` object stores these results.
+# You can also call and display them individually as shown below.
+
+# Average Marginal Effects on the (0-1) scale
+cat("\n\n===== Average Marginal Effects (0-1 Scale) =====\n")
+# The `result$marginal_effects` object stores the results on the (0-1) scale
+print(summary(result$marginal_effects))
+
+# Average Marginal Effects rescaled to the (0-10) scale
+cat("\n\n===== Average Marginal Effects (0-10 Scale) =====\n")
+# The `result$marginal_effects_rescaled` object stores the rescaled results
+print(result$marginal_effects_rescaled)
+
+
+
+
+#################################################################
+# 6. Estimating Marginal Willingness to Pay (MWTP)
+#################################################################
+
+# The fs_mwtp() function is included in the "FactorialSurvey" package.
+# It takes the results from fs_betareg() and automatically calculates
+# the MWTP for a specified attribute.
+
+# --- Estimate MWTP for "Main dish is chicken" ---
+fs_mwtp(
+  model_results = result,
+  variable_name = "main.chicken",
+  price_variable_name = "price"
+)
+
+# --- Estimate MWTP for "A side dish is included" ---
+fs_mwtp(
+  model_results = result,
+  variable_name = "side",
+  price_variable_name = "price"
+)</code></pre>
+
+        <h2>Teaching materials</h2>
+        <p>See the <a href="https://tanakalab.gitbook.io/factorialsurvey/" target="_blank" rel="noopener">GitBook documentation</a> for step‑by‑step tutorials,
+           including a beginner‑friendly chapter on <em>beta regression with 0–10 scales</em>.</p>
+
+        <h2>Citation</h2>
+        <p>If you use the package, please cite the working paper:</p>
+        <p>Tanaka, K. (2025). <em>A Unified Framework for Estimating Willingness to Pay Using Factorial Survey Experiments</em>. SSRN Working Paper. <a href="https://dx.doi.org/10.2139/ssrn.5238343">https://dx.doi.org/10.2139/ssrn.5238343</a></p>
+      </section>
+
+      <aside>
+        <h2>Status</h2>
+        <div class="box">
+          <ul>
+            <li><strong>Current version:</strong> dev</li>
+            <li><strong>Core functions:</strong> <code>fs_defficient</code>, <code>fs_betareg</code>, <code>fs_post_estimate</code>, <code>fs_mwtp</code>, <code>fs_ewtp</code></li>
+            <li><strong>License:</strong> MIT (planned)</li>
+          </ul>
+        </div>
+
+        <h2>Links</h2>
+        <div class="box">
+          <ul>
+            <li><a href="https://tanakalab.gitbook.io/factorialsurvey/" target="_blank" rel="noopener">Documentation (GitBook)</a></li>
+            <li><a href="https://github.com/tanakak/FactorialSurvey" target="_blank" rel="noopener">Source on GitHub</a></li>
+            <li><a href="pub.html">Related publications</a></li>
+          </ul>
+        </div>
+
+        <h2>Support</h2>
+        <div class="box">
+          <p>Issues and feature requests: please open a ticket on <a href="https://github.com/tanakak/FactorialSurvey/issues" target="_blank" rel="noopener">GitHub Issues</a>.</p>
+        </div>
+      </aside>
+    </div>
+  </main>
+  <footer>
+    © 2025 Tanaka Laboratory. All rights reserved.
+  </footer>
+</body>
+</html>
