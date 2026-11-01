@@ -1,66 +1,74 @@
 #################################################################
+# FactorialSurvey demo: a lunch-box (bento) factorial survey
+#################################################################
+
+# 48 university students each rated 8 lunch-box vignettes on a 0-10 scale
+# (0 = "would definitely not buy", 10 = "would definitely buy").
+# Each vignette varied four attributes:
+#   - x1: Main dish (0 = grilled fish, 1 = teriyaki chicken, 2 = tofu hamburger)
+#   - x2: Side dish included (1 = yes, 0 = no)
+#   - x3: Nutrition information shown (1 = yes, 0 = no)
+#   - x4: Price in yen (700, 900, 1100, 1300)
+#
+# This script reads the raw survey files, reshapes them, fits a beta
+# regression with standard errors clustered by respondent, and computes
+# the marginal and expected willingness to pay (WTP).
+
+
+
+#################################################################
 # 0. Preparation: Load Packages
 #################################################################
 
-# Install required packages (only for the first time)
-# 'devtools' is necessary to install packages from GitHub.
-# This step will be skipped if it's already installed.
-if (!requireNamespace("devtools", quietly = TRUE)) {
-  install.packages("devtools")
+# Install the FactorialSurvey package from GitHub.
+# Run this once, and again whenever you want the latest version.
+# 'remotes' is needed to install packages from GitHub.
+# "dependencies = TRUE" also installs 'margins', which is used for the
+# average marginal effects, and the other suggested packages.
+# "upgrade = 'never'" leaves your other packages as they are.
+if (!requireNamespace("remotes", quietly = TRUE)) {
+  install.packages("remotes")
 }
-
-# Force install the latest version of the FactorialSurvey package from GitHub.
-# "force = TRUE" ensures that it overwrites any existing version.
-# "upgrade = 'never'" prevents the upgrading of other packages.
-devtools::install_github("tanakak/FactorialSurvey",
-                         force = TRUE,
-                         upgrade = "never",
-                         dependencies = TRUE)
+remotes::install_github("tanakak/FactorialSurvey",
+                        dependencies = TRUE,
+                        upgrade = "never")
 
 # Load the FactorialSurvey package.
-# This makes functions like fs_betareg available for use.
 library(FactorialSurvey)
 
-
-# Load other necessary packages.
-# These are the "tools" required for the data analysis.
-library(dplyr)      # For efficient data manipulation and processing.
-library(tidyr)      # For tidying data, especially for converting between "wide" and "long" formats.
-library(betareg)    # For running beta regression models.
-library(margins)    # For calculating marginal effects.
+# Load other packages used for data handling.
+library(dplyr)      # For data manipulation.
+library(tidyr)      # For converting between "wide" and "long" formats.
 
 
 
 #################################################################
-# 1. Data Loading and Preprocessing
+# 1. Data Loading
 #################################################################
 
-
-# --- Load the Data ---
-# Use the read.csv() function to load the CSV file into a data frame in R.
-# The data will be stored in an object named "data".
-# [NOTE] Please ensure that "bento.csv" is in your current working directory.
-data <- read.csv("bento.csv")
-
-
-# --- Remove Unnecessary Columns ---
-# Delete the 'time' column, as it will not be used in the analysis.
-data <- data %>% select(-time)
+# --- Load the Data from GitHub ---
+# bento.csv    : one row per respondent; columns fs_q1 to fs_q8 hold the
+#                ratings of vignettes 1 to 8.
+# vignette.csv : one row per vignette; id_fse identifies the vignette and
+#                x1 to x4 give its attributes.
+# [NOTE] To use your own copies instead, replace the URLs with file names,
+#        e.g. read.csv("bento.csv").
+base_url  <- "https://raw.githubusercontent.com/tanakak/fs/main/"
+data      <- read.csv(paste0(base_url, "bento.csv"))
+data_fse  <- read.csv(paste0(base_url, "vignette.csv"))
 
 
 # --- Create Respondent IDs ---
-# Add an 'id' column to uniquely identify each row (each respondent).
+# Add an 'id' column to identify each row (each respondent).
 data$id <- 1:nrow(data)
 
-
-# --- Reorder Columns ---
 # Move the 'id' column to the first position.
 data <- data %>% select(id, everything())
 
 
 # --- Inspect the Data ---
 str(data)
-summary(data)
+data_fse
 
 
 
@@ -68,28 +76,26 @@ summary(data)
 # 2. Data Reshaping (from Wide to Long)
 #################################################################
 
-# --- Reshape the Data ---
-# Convert the data from "wide" format to "long" format.
+# Convert the data from "wide" format (one row per respondent) to
+# "long" format (one row per rating).
 data_long <- data %>%
   pivot_longer(
-    # Specify the columns to be reshaped (all columns starting with "fs_q")
+    # The columns to be reshaped (all columns starting with "fs_q")
     cols = starts_with("fs_q"),
-    
-    # The name of the new column that will store the original column names
+
+    # The new column that will store the original column names
     names_to = "id_fse",
-    
-    # The name of the new column that will store the original values
+
+    # The new column that will store the ratings
     values_to = "rating"
   ) %>%
   mutate(
-    # Remove the "fs_q" prefix from the "id_fse" column and convert it to a number
+    # Remove the "fs_q" prefix and convert the vignette number to an integer
     id_fse = as.integer(gsub("fs_q", "", id_fse))
   ) %>%
-  # Sort the data by respondent id and vignette id
+  # Sort by respondent and vignette
   arrange(id, id_fse)
 
-
-# --- Check the Reshaped Data ---
 head(data_long)
 
 
@@ -98,103 +104,114 @@ head(data_long)
 # 3. Merging with Vignette Information
 #################################################################
 
-# --- Load FSE Vignette Data ---
-# [NOTE] Please ensure that "vignette.csv" is in your current working directory.
-data_fse <- read.csv("vignette.csv")
-
-
-# --- Merge the Datasets ---
-# Join 'data_long' and 'data_fse' using "id_fse" as the key.
+# Join the ratings and the vignette attributes using "id_fse" as the key.
 data_merged <- data_long %>%
   left_join(data_fse, by = "id_fse")
 
-
-# --- Check the Merged Data ---
-str(data_merged)
 head(data_merged)
 
 
 
 #################################################################
-# 4. Factorial Survey Experiment (FSE) Analysis
+# 4. Creating Variables for Analysis
 #################################################################
 
-
-# --- Create Variables for Analysis ---
-# Rename the vignette factors (x1, x2, etc.) to more intuitive names
-# and convert them into dummy variables for the analysis.
+# Give the attributes intuitive names.
+# 'main' is a factor: R turns it into dummy variables automatically,
+# with the first level (grilled fish) as the reference.
 data_merged <- data_merged %>%
   mutate(
-    price        = x4,
-    main.chicken = ifelse(x1 == 1, 1, 0),
-    main.tofu    = ifelse(x1 == 2, 1, 0),
-    side         = ifelse(x2 == 1, 1, 0),
-    info         = ifelse(x3 == 1, 1, 0)
+    main  = factor(x1, levels = 0:2,
+                   labels = c("grilled fish", "teriyaki chicken",
+                              "tofu hamburger")),
+    side  = x2,
+    info  = x3,
+    price = x4
   )
 
-# --- Check Descriptive Statistics ---
-summary(data_merged %>% select(rating, price, main.chicken, main.tofu, side, info))
+summary(data_merged %>% select(rating, main, side, info, price))
 
 
-# --- Estimate the Model ---
-# Use the fs_betareg() function to estimate a beta regression model.
-# This function automates model estimation, calculation of marginal effects,
-# and printing the results based on the provided formula and data.
 
+#################################################################
+# 5. Estimating the Model (Beta Regression)
+#################################################################
+
+# fs_betareg() fits a beta regression, which respects the bounds of the
+# rating scale. The 0-10 ratings are mapped onto the open interval (0, 1)
+# automatically (the defaults are scale = c(0, 10) and transform = TRUE).
+#
+# Each student rated eight vignettes, so ratings by the same person are
+# correlated. "cluster = ~ id" makes the standard errors, and everything
+# computed from them (including WTP), robust to this.
 result <- fs_betareg(
-  # Specify the model formula: explain 'rating' with price, main.chicken, etc.
-  formula = rating ~ price + main.chicken + main.tofu + side + info,
-  
-  # Specify the data frame to be used for the analysis
-  data = data_merged,
-  
-  # Automatically transform the response variable 'rating' to the (0, 1) interval
-  # required for beta regression.
-  transform = TRUE
+  rating ~ main + side + info + price,
+  data    = data_merged,
+  cluster = ~ id
 )
 
+# Coefficients with cluster-robust standard errors, fit statistics
+# (log-likelihood, AIC, BIC, pseudo R2) and average marginal effects on
+# both the (0-1) scale and the original (0-10) rating scale.
+summary(result)
 
-#################################################################
-# 5. Marginal Effects (Original 0-1 Scale vs. Rescaled 0-10 Scale)
-#################################################################
-
-# When `verbose=TRUE` (the default), the fs_betareg() function prints both
-# the (0-1) scale and (0-10) scale marginal effects to the console during execution.
-
-# Additionally, the returned `result` object stores these results.
-# You can also call and display them individually as shown below.
-
-# Average Marginal Effects on the (0-1) scale
-cat("\n\n===== Average Marginal Effects (0-1 Scale) =====\n")
-# The `result$marginal_effects` object stores the results on the (0-1) scale
-print(summary(result$marginal_effects))
-
-# Average Marginal Effects rescaled to the (0-10) scale
-cat("\n\n===== Average Marginal Effects (0-10 Scale) =====\n")
-# The `result$marginal_effects_rescaled` object stores the rescaled results
-print(result$marginal_effects_rescaled)
-
+# The average marginal effects on the (0-10) scale can also be extracted.
+result$marginal_effects_rescaled
 
 
 
 #################################################################
-# 6. Estimating Marginal Willingness to Pay (MWTP)
+# 6. Marginal Willingness to Pay (MWTP)
 #################################################################
 
-# The fs_mwtp() function is included in the "FactorialSurvey" package.
-# It takes the results from fs_betareg() and automatically calculates
-# the MWTP for a specified attribute.
+# fs_mwtp() divides each attribute coefficient by the price coefficient:
+# the MWTP is the price change (in yen) that would offset the attribute.
+# Without 'variable', all attributes are reported.
+mwtp <- fs_mwtp(result, price = "price")
+mwtp
+plot(mwtp) + ggplot2::labs(x = "Marginal willingness to pay (yen)")
 
-# --- Estimate MWTP for "Main dish is chicken" ---
-fs_mwtp(
-  model_results = result,
-  variable_name = "main.chicken",
-  price_variable_name = "price"
+# A single attribute: "A side dish is included"
+fs_mwtp(result, variable = "side", price = "price")
+
+# Simulation-based (Krinsky-Robb) intervals instead of the delta method
+fs_mwtp(result, price = "price", method = "krinsky-robb", seed = 1)
+
+
+
+#################################################################
+# 7. Expected Willingness to Pay (EWTP) for Whole Lunch Boxes
+#################################################################
+
+# fs_ewtp() values a complete scenario -- a whole lunch box -- rather than
+# a single attribute. Give one row per scenario; the price is not needed.
+boxes <- data.frame(
+  main = c("grilled fish", "teriyaki chicken", "teriyaki chicken"),
+  side = c(0, 0, 1),
+  info = c(0, 0, 1),
+  row.names = c("Fish, plain", "Chicken, plain", "Chicken, full")
 )
 
-# --- Estimate MWTP for "A side dish is included" ---
-fs_mwtp(
-  model_results = result,
-  variable_name = "side",
-  price_variable_name = "price"
-)
+ewtp <- fs_ewtp(result, boxes, price = "price")
+ewtp
+plot(ewtp) + ggplot2::labs(x = "Expected willingness to pay (yen)")
+
+
+
+#################################################################
+# 8. Notes
+#################################################################
+
+# The same data are included in the package as 'bento'
+# (with 'respondent' in place of 'id'), so the model can also be fitted
+# without downloading anything:
+#   fit <- fs_betareg(rating ~ main + side + info + price,
+#                     data = bento, cluster = ~ respondent)
+#
+# For yes/no responses, use fs_logit() in place of fs_betareg();
+# fs_mwtp() and fs_ewtp() work in the same way.
+#
+# For a full walk-through, including how to design the vignettes and
+# decide how many respondents are needed, see the "Getting started"
+# vignette of the package:
+#   https://github.com/tanakak/FactorialSurvey/blob/master/vignettes/FactorialSurvey.Rmd
