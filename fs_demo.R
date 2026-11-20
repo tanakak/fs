@@ -20,18 +20,11 @@
 # 0. Preparation: Load Packages
 #################################################################
 
-# Install the FactorialSurvey package from GitHub.
-# Run this once, and again whenever you want the latest version.
-# 'remotes' is needed to install packages from GitHub.
-# "dependencies = TRUE" also installs 'margins', which is used for the
-# average marginal effects, and the other suggested packages.
-# "upgrade = 'never'" leaves your other packages as they are.
-if (!requireNamespace("remotes", quietly = TRUE)) {
-  install.packages("remotes")
-}
-remotes::install_github("tanakak/FactorialSurvey",
-                        dependencies = TRUE,
-                        upgrade = "never")
+# Install the packages used in this script from CRAN.
+# Run this once; skip it if the packages are already installed.
+# 'margins' is used by FactorialSurvey for the average marginal effects,
+# and 'dplyr' and 'tidyr' are used below for data handling.
+install.packages(c("FactorialSurvey", "margins", "dplyr", "tidyr"))
 
 # Load the FactorialSurvey package.
 library(FactorialSurvey)
@@ -214,4 +207,4 @@ plot(ewtp) + ggplot2::labs(x = "Expected willingness to pay (yen)")
 # For a full walk-through, including how to design the vignettes and
 # decide how many respondents are needed, see the "Getting started"
 # vignette of the package:
-#   https://github.com/tanakak/FactorialSurvey/blob/master/vignettes/FactorialSurvey.Rmd
+#   vignette("FactorialSurvey", package = "FactorialSurvey")
